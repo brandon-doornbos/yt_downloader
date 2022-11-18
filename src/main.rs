@@ -1,99 +1,75 @@
 use std::{
-    fs::File,
-    io::{stdin, Read, Write},
-    process::{Child, Command},
-    str,
+    io::stdin,
+    process::{Child, Command, Stdio},
+    thread, time,
 };
 
-const CONFIG_PATH: &str = "config.txt";
-
 fn main() -> std::io::Result<()> {
-    let mut config_file = File::open(CONFIG_PATH);
-    let mut save_path = String::new();
-
-    match config_file {
-        Ok(mut file) => {
-            file.read_to_string(&mut save_path)?;
-
-            if save_path.is_empty() {
-                println!("Please enter the folder where you want your playlists to be saved:");
-                stdin().read_line(&mut save_path)?;
-
-                file.write_all(save_path.as_bytes())?;
-            }
-        }
-        Err(_) => {
-            config_file = File::create(CONFIG_PATH);
-
-            println!("Please enter the folder where you want your playlists to be saved:");
-            stdin().read_line(&mut save_path)?;
-
-            config_file.ok().unwrap().write_all(save_path.as_bytes())?;
-        }
-    }
+    let folder = rfd::FileDialog::new()
+        .set_title("Select save location")
+        .pick_folder()
+        .unwrap();
+    let save_path = folder.to_str().unwrap();
 
     let mut url = String::new();
     println!("Please enter the url of the playlist you want to download:");
     stdin().read_line(&mut url)?;
 
-    let playlist_count_stdout = Command::new("yt-dlp")
-        .arg("--flat-playlist")
-        .arg("--print")
-        .arg("%(playlist_count)j")
-        .arg("--playlist_items")
-        .arg("1")
-        .arg("--yes-playlist")
-        .arg("--no-cache-dir")
-        .arg(&url)
-        .output()
-        .expect("Failed to execute command")
-        .stdout;
+    println!("Getting tracks...");
+    let playlist_ids_stdout = String::from_utf8(
+        Command::new("yt-dlp")
+            .arg("--flat-playlist")
+            .arg("--print")
+            .arg("%(id)s")
+            .arg("--yes-playlist")
+            .arg("--no-cache-dir")
+            .arg(&url)
+            .output()
+            .expect("Failed to execute command")
+            .stdout,
+    )
+    .unwrap();
 
-    let playlist_count: usize = str::from_utf8(&playlist_count_stdout)
-        .ok()
-        .unwrap()
-        .trim()
-        .parse::<usize>()
-        .unwrap();
+    let playlist_ids: Vec<&str> = playlist_ids_stdout.split_whitespace().collect();
+    println!("Found {} tracks", playlist_ids.len());
 
-    let mut thread_count: usize = num_cpus::get();
-    if playlist_count < thread_count {
-        thread_count = playlist_count;
-    }
-    let tracks_per_thread = playlist_count / thread_count;
-
-    save_path = save_path.trim().to_string();
+    let thread_count: usize = num_cpus::get();
 
     let mut children = vec![];
+    let mut index = 0;
 
-    children.push(spawn_process(&save_path, &url, 1, 2 * tracks_per_thread));
-    for i in 2..thread_count {
-        let start = i * tracks_per_thread;
-        children.push(spawn_process(
-            &save_path,
-            &url,
-            start + 1,
-            start + tracks_per_thread,
-        ));
+    for _i in 0..std::cmp::min(thread_count, playlist_ids.len()) {
+        children.push(spawn_process(save_path, playlist_ids[index]));
+        index += 1;
+        println!("Downloading track {}", index);
     }
-    children.push(spawn_process(
-        &save_path,
-        &url,
-        thread_count * tracks_per_thread + 1,
-        playlist_count,
-    ));
 
-    for i in 0..children.len() {
-        children[i].wait().expect("Command wasn't running");
+    while index < playlist_ids.len() {
+        for child in &mut children {
+            match child.try_wait() {
+                Ok(Some(_status)) => {
+                    *child = spawn_process(save_path, playlist_ids[index]);
+                    index += 1;
+                    println!("Downloading track {}", index);
+                }
+                Ok(None) => {}
+                Err(e) => println!("Error attempting to wait: {e}"),
+            }
+        }
+        thread::sleep(time::Duration::from_millis(100));
+    }
+
+    for mut child in children {
+        child.wait().expect("Command was not running!");
     }
 
     Ok(())
 }
 
-fn spawn_process(save_path: &str, url: &str, playlist_start: usize, playlist_end: usize) -> Child {
+fn spawn_process(save_path: &str, id: &str) -> Child {
     Command::new("yt-dlp")
         .arg("-o")
-        .arg(save_path.to_owned() + "/%(playlist_title)s/%(title)s.%(ext)s")
+        .arg(save_path.to_owned() + "/%(title)s.%(ext)s")
         .arg("-x")
         .arg("--audio-format")
         .arg("mp3")
@@ -102,12 +78,11 @@ fn spawn_process(save_path: &str, url: &str, playlist_start: usize, playlist_end
         .arg("--format")
         .arg("bestaudio/best")
         .arg("-i")
-        .arg("--yes-playlist")
         .arg("--no-cache-dir")
         .arg("--embed-metadata")
-        .arg("--playlist-items")
-        .arg(playlist_start.to_string() + "-" + &playlist_end.to_string())
-        .arg(url)
+        .arg("--")
+        .arg(id)
+        .stdout(Stdio::null())
         .spawn()
         .expect("Failed to execute command")
 }
