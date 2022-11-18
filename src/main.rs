@@ -29,6 +29,7 @@ fn get_playlist(save_path: &str) {
             .arg("%(id)s")
             .arg("--yes-playlist")
             .arg("--no-cache-dir")
+            .arg("--")
             .arg(&url)
             .output()
             .expect("Failed to execute command")
