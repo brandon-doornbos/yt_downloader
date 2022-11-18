@@ -4,16 +4,22 @@ use std::{
     thread, time,
 };
 
-fn main() -> std::io::Result<()> {
+fn main() {
     let folder = rfd::FileDialog::new()
         .set_title("Select save location")
         .pick_folder()
         .unwrap();
     let save_path = folder.to_str().unwrap();
 
+    loop {
+        get_playlist(save_path);
+    }
+}
+
+fn get_playlist(save_path: &str) {
     let mut url = String::new();
-    println!("Please enter the url of the playlist you want to download:");
-    stdin().read_line(&mut url)?;
+    println!("Please enter the url of the playlist or song you want to download:");
+    stdin().read_line(&mut url).unwrap();
 
     println!("Getting tracks...");
     let playlist_ids_stdout = String::from_utf8(
@@ -63,7 +69,7 @@ fn main() -> std::io::Result<()> {
         child.wait().expect("Command was not running!");
     }
 
-    Ok(())
+    println!("Done!");
 }
 
 fn spawn_process(save_path: &str, id: &str) -> Child {
