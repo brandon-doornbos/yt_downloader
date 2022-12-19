@@ -1,4 +1,5 @@
 use std::{
+    error::Error,
     io::stdin,
     process::{Child, Command, Stdio},
     thread, time,
@@ -12,14 +13,16 @@ fn main() {
     let save_path = folder.to_str().unwrap();
 
     loop {
-        get_playlist(save_path);
+        if let Err(error) = get_playlist(save_path) {
+            println!("Error occured, try again! ({})", error);
+        }
     }
 }
 
-fn get_playlist(save_path: &str) {
+fn get_playlist(save_path: &str) -> Result<(), Box<dyn Error>> {
     let mut url = String::new();
     println!("Please enter the url of the playlist or song you want to download:");
-    stdin().read_line(&mut url).unwrap();
+    stdin().read_line(&mut url).unwrap_or(0);
 
     println!("Getting tracks...");
     let playlist_ids_stdout = String::from_utf8(
@@ -31,11 +34,9 @@ fn get_playlist(save_path: &str) {
             .arg("--no-cache-dir")
             .arg("--")
             .arg(&url)
-            .output()
-            .expect("Failed to execute command")
+            .output()?
             .stdout,
-    )
-    .unwrap();
+    )?;
 
     let playlist_ids: Vec<&str> = playlist_ids_stdout.split_whitespace().collect();
     println!("Found {} tracks", playlist_ids.len());
@@ -60,7 +61,7 @@ fn get_playlist(save_path: &str) {
                     println!("Downloading track {}", index);
                 }
                 Ok(None) => {}
-                Err(e) => println!("Error attempting to wait: {e}"),
+                Err(error) => println!("Error attempting to wait: {}", error),
             }
         }
         thread::sleep(time::Duration::from_millis(100));
@@ -71,6 +72,7 @@ fn get_playlist(save_path: &str) {
     }
 
     println!("Done!");
+    Ok(())
 }
 
 fn spawn_process(save_path: &str, id: &str) -> Child {
