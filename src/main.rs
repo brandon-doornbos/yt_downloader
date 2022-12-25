@@ -1,19 +1,40 @@
 use std::{
     error::Error,
-    io::stdin,
+    fs::File,
+    io::{stdin, Read, Write},
     process::{Child, Command, Stdio},
     thread, time,
 };
 
-fn main() {
-    let folder = rfd::FileDialog::new()
-        .set_title("Select save location")
-        .pick_folder()
-        .unwrap();
-    let save_path = folder.to_str().unwrap();
+const CONFIG_PATH: &str = "config.txt";
+
+fn main() -> std::io::Result<()> {
+    let mut config_file = File::open(CONFIG_PATH);
+    let mut save_path = String::new();
+
+    match config_file {
+        Ok(mut file) => {
+            file.read_to_string(&mut save_path)?;
+
+            if save_path.is_empty() {
+                println!("Please enter the folder where you want your playlists to be saved:");
+                stdin().read_line(&mut save_path)?;
+
+                file.write_all(save_path.as_bytes())?;
+            }
+        }
+        Err(_) => {
+            config_file = File::create(CONFIG_PATH);
+
+            println!("Please enter the folder where you want your playlists to be saved:");
+            stdin().read_line(&mut save_path)?;
+
+            config_file?.write_all(save_path.trim().as_bytes())?;
+        }
+    }
 
     loop {
-        if let Err(error) = get_playlist(save_path) {
+        if let Err(error) = get_playlist(&save_path) {
             println!("Error occured, try again! ({})", error);
         }
     }
@@ -25,6 +46,29 @@ fn get_playlist(save_path: &str) -> Result<(), Box<dyn Error>> {
     stdin().read_line(&mut url).unwrap_or(0);
 
     println!("Getting tracks...");
+
+    let playlist_title_stdout = String::from_utf8(
+        Command::new("yt-dlp")
+            .arg("--flat-playlist")
+            .arg("--print")
+            .arg("%(playlist_title)s")
+            .arg("--yes-playlist")
+            .arg("--playlist-items")
+            .arg("1")
+            .arg("--no-cache-dir")
+            .arg("--")
+            .arg(&url)
+            .output()?
+            .stdout,
+    )?;
+    let mut playlist_title = playlist_title_stdout.trim();
+
+    if playlist_title != "NA" {
+        println!("Found playlist: {}", playlist_title);
+    } else {
+        playlist_title = "";
+    }
+
     let playlist_ids_stdout = String::from_utf8(
         Command::new("yt-dlp")
             .arg("--flat-playlist")
@@ -47,7 +91,11 @@ fn get_playlist(save_path: &str) -> Result<(), Box<dyn Error>> {
     let mut index = 0;
 
     for _i in 0..std::cmp::min(thread_count, playlist_ids.len()) {
-        children.push(spawn_process(save_path, playlist_ids[index]));
+        children.push(spawn_process(
+            save_path,
+            playlist_ids[index],
+            playlist_title,
+        ));
         index += 1;
         println!("Downloading track {}", index);
     }
@@ -56,7 +104,7 @@ fn get_playlist(save_path: &str) -> Result<(), Box<dyn Error>> {
         for child in &mut children {
             match child.try_wait() {
                 Ok(Some(_status)) => {
-                    *child = spawn_process(save_path, playlist_ids[index]);
+                    *child = spawn_process(save_path, playlist_ids[index], playlist_title);
                     index += 1;
                     println!("Downloading track {}", index);
                 }
@@ -75,10 +123,17 @@ fn get_playlist(save_path: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn spawn_process(save_path: &str, id: &str) -> Child {
+fn spawn_process(save_path: &str, id: &str, playlist_title: &str) -> Child {
+    let mut path = save_path.to_owned();
+    if !playlist_title.is_empty() {
+        path += "/";
+        path += playlist_title;
+    }
+    path += "/%(title)s.%(ext)s";
+
     Command::new("yt-dlp")
         .arg("-o")
-        .arg(save_path.to_owned() + "/%(title)s.%(ext)s")
+        .arg(path)
         .arg("-x")
         .arg("--audio-format")
         .arg("mp3")
