@@ -9,6 +9,8 @@ use std::{
 const CONFIG_PATH: &str = "config.txt";
 
 fn main() -> std::io::Result<()> {
+    Command::new("yt-dlp").arg("-U").arg("-q").spawn()?;
+
     let mut config_file = File::open(CONFIG_PATH);
     let mut save_path = String::new();
 
