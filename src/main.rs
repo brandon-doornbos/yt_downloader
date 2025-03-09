@@ -6,6 +6,12 @@ use std::{
 };
 
 fn main() {
+    Command::new("yt-dlp")
+        .arg("-U")
+        .arg("-q")
+        .spawn()
+        .expect("Unable to update yt-dlp, do you have it installed?");
+
     let folder = rfd::FileDialog::new()
         .set_title("Select save location")
         .pick_folder()
